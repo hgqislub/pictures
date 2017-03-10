@@ -1,0 +1,57 @@
+group getNode
+SgClient  -> SgClient: GetPartitionId(vol)
+SgClient -> Tooz: GetOneSgServer(partitionId)
+note left Tooz
+    consistent hash
+end note
+SgClient <- Tooz: SgserverInfo
+end
+ 
+loop
+    Tooz <->SgServer: HeartBeat
+    Tooz <->OtherSgServers: HeartBeat
+end
+
+group InitServers
+SgServer -> Tooz: GetPartitions(node)
+OtherSgServers -> Tooz: GetPartitions(node)
+SgServer <- Tooz: Partitions
+OtherSgServers <- Tooz: Partitions
+note left DB
+            partition1[vol1,vol2...]
+            partitionN[volN1,vol1N2...]
+end note
+SgServer -> DB: LoadMetadata
+OtherSgServers -> DB: LoadMetadata
+SgServer <- DB: Metadata
+OtherSgServers <- DB: Metadata
+end
+
+alt **normal case**
+    group volumeOp
+        SgClient -> SgServer: GetMetadata
+        SgClient <- SgServer: Metadata
+        SgClient -> SgClient: OperateVolume
+        SgClient -> SgServer: UpdateMetadata
+        SgServer -> DB: UpdateMetadata
+    end
+else **failover case**
+    note over SgServer,Tooz
+        heart beat broken
+    end note
+    Tooz -> Tooz: ReBalancePartition(hashring)
+    OtherSgServers -> Tooz: GetPartitionsInfoOfDeadSgServer
+   OtherSgServers <- Tooz: PartitionsInfoOfDeadSgServer
+    Tooz -> Tooz: RemoveSgServerInfo
+    SgServer -> SgServer: DealWithOngoingReq\nif node alive
+    SgServer -> SgServer: DisconnectWithDB\nif node alive
+    ...wait N seconds \n  to ensure SgServer dead out...
+    OtherSgServers -> DB: LoadPartitionsMetadata
+    OtherSgServers <- DB: MetadataOfPartitions
+    OtherSgServers -> OtherSgServers: TakeOverVolumes\nBelongToDeadSgServer
+    ref over SgClient, Tooz: getNode
+else **another type of failure**
+    SgServer -> SgClient: Please repeat
+ 
+end
+ 
